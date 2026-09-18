@@ -3,6 +3,9 @@ const router = express.Router();
 const crudFactory = require('../utils/crudFactory');
 const asyncHandler = require('../utils/asyncHandler');
 const sessionRevisionController = require('../controllers/sessionRevisionController');
+const aiController = require('../controllers/aiController');
+const aiRateLimit = require('../middleware/aiRateLimit');
+const { ensureDefaultSemestre } = require('../utils/defaultAcademic');
 
 function mount(path, controller) {
   router.get(path, asyncHandler(controller.getAll));
@@ -49,19 +52,33 @@ mount(
   })
 );
 
-mount(
+// UE : id_semestre est requis par le schéma, mais le frontend n'a pas à gérer tout le
+// parcours académique. Si id_semestre n'est pas fourni à la création, on provisionne
+// (une seule fois) un établissement/formation/inscription/semestre par défaut pour
+// l'utilisateur et on l'utilise automatiquement (voir utils/defaultAcademic.js).
+const ueController = crudFactory('ue', 'id_ue', {
+  fields: ['code_ue', 'nom', 'description', 'credits', 'volume_horaire', 'id_semestre'],
+  chainConfig: {
+    fkColumn: 'id_semestre',
+    chain: [
+      { table: 'semestre', pk: 'id_semestre', fk: 'id_inscription' },
+      { table: 'inscription', pk: 'id_inscription', fk: 'id_utilisateur' },
+    ],
+  },
+});
+router.get('/ues', asyncHandler(ueController.getAll));
+router.get('/ues/:id', asyncHandler(ueController.getOne));
+router.post(
   '/ues',
-  crudFactory('ue', 'id_ue', {
-    fields: ['code_ue', 'nom', 'description', 'credits', 'volume_horaire', 'id_semestre'],
-    chainConfig: {
-      fkColumn: 'id_semestre',
-      chain: [
-        { table: 'semestre', pk: 'id_semestre', fk: 'id_inscription' },
-        { table: 'inscription', pk: 'id_inscription', fk: 'id_utilisateur' },
-      ],
-    },
+  asyncHandler(async (req, res, next) => {
+    if (!req.body.id_semestre) {
+      req.body.id_semestre = await ensureDefaultSemestre(req.user.id_utilisateur);
+    }
+    return ueController.create(req, res, next);
   })
 );
+router.put('/ues/:id', asyncHandler(ueController.update));
+router.delete('/ues/:id', asyncHandler(ueController.remove));
 
 mount(
   '/evaluations',
@@ -149,5 +166,13 @@ mount(
     scopeField: 'id_utilisateur',
   })
 );
+
+// --- Assistant IA (programme de révision, quiz, mini-projet) ---
+// Le modèle (OpenRouter) n'est appelé que d'ici, côté serveur : Utilisateur → Backend → IA.
+// Le limiteur protège le quota de la clé partagée.
+router.use('/ai', aiRateLimit);
+router.post('/ai/programme', asyncHandler(aiController.programme));
+router.post('/ai/quiz', asyncHandler(aiController.quiz));
+router.post('/ai/projet', asyncHandler(aiController.projet));
 
 module.exports = router;
