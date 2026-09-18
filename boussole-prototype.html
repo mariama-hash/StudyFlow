@@ -1092,7 +1092,7 @@
       const load = k => { try { return JSON.parse(localStorage.getItem(k)) ?? null; } catch (e) { return null; } };
       const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } };
 
-      const API_BASE = 'http://localhost:3000/api';
+      const API_BASE = 'http://localhost:3001/api';
 
       function getToken() { try { return localStorage.getItem('studyflow-token'); } catch (e) { return null; } }
       function getUser() { try { return JSON.parse(localStorage.getItem('studyflow-user')); } catch (e) { return null; } }
@@ -1115,6 +1115,127 @@
         return data;
       }
 
+      function nextDateForDay(dayAbbrev, timeStr) {
+        const map = { 'Lun': 1, 'Mar': 2, 'Mer': 3, 'Jeu': 4, 'Ven': 5, 'Sam': 6, 'Dim': 0 };
+        const target = map[dayAbbrev];
+        const now = new Date();
+        const diff = (target - now.getDay() + 7) % 7;
+        const date = new Date(now);
+        date.setDate(now.getDate() + diff);
+        if (timeStr) {
+          const [h, m] = timeStr.split(':').map(Number);
+          date.setHours(h || 0, m || 0, 0, 0);
+        } else {
+          date.setHours(9, 0, 0, 0);
+        }
+        const pad = n => String(n).padStart(2, '0');
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:00`;
+      }
+
+      async function loadEvents() {
+        try {
+          const rows = await apiFetch('/personnel/evenements');
+          const dayNames = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
+          state.events = rows.map(r => {
+            const d = new Date(r.date_debut.replace(' ', 'T'));
+            return { id: r.id_evenement, titre: r.titre, jour: dayNames[d.getDay()], heure: String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') };
+          });
+          renderWeek(); renderStats(); renderRestSuggestion();
+        } catch (err) { console.error(err); }
+      }
+
+      function academicYear() {
+        const now = new Date();
+        const y = now.getFullYear();
+        return (now.getMonth() >= 8) ? `${y}-${y + 1}` : `${y - 1}-${y}`;
+      }
+
+      let pedContext = { id_semestre: null };
+      async function ensurePedagogieContext() {
+        if (pedContext.id_semestre) return pedContext.id_semestre;
+        const formations = await apiFetch('/pedagogique/formations');
+        if (!formations.length) throw new Error("Aucune formation configurée en base — voir le script SQL à exécuter une fois.");
+        const id_formation = formations[0].id_formation;
+
+        const inscriptions = await apiFetch('/pedagogique/inscriptions');
+        let id_inscription = inscriptions.length ? inscriptions[0].id_inscription : null;
+        if (!id_inscription) {
+          const created = await apiFetch('/pedagogique/inscriptions', {
+            method: 'POST',
+            body: JSON.stringify({ id_formation, date_inscription: new Date().toISOString().slice(0, 10) }),
+          });
+          id_inscription = created.id_inscription;
+        }
+
+        const semestres = await apiFetch('/pedagogique/semestres');
+        let id_semestre = semestres.length ? semestres[0].id_semestre : null;
+        if (!id_semestre) {
+          const created = await apiFetch('/pedagogique/semestres', {
+            method: 'POST',
+            body: JSON.stringify({ numero: 1, annee_academique: academicYear(), id_inscription }),
+          });
+          id_semestre = created.id_semestre;
+        }
+        pedContext.id_semestre = id_semestre;
+        return id_semestre;
+      }
+
+      async function loadUEs() {
+        try {
+          const rows = await apiFetch('/pedagogique/ues');
+          state.ue = rows.map(r => ({ id: r.id_ue, nom: r.nom, vol: r.volume_horaire, cred: r.credits }));
+          renderUE(); renderStats();
+        } catch (err) { console.error(err); }
+      }
+
+      let budgetContext = { id_budget: null };
+      let categoryCache = null;
+
+      async function ensureBudgetId(montantInitial) {
+        if (budgetContext.id_budget) return budgetContext.id_budget;
+        const rows = await apiFetch('/economique/budgets');
+        if (rows.length) { budgetContext.id_budget = rows[0].id_budget; return budgetContext.id_budget; }
+        const created = await apiFetch('/economique/budgets', {
+          method: 'POST',
+          body: JSON.stringify({ nom: 'Budget du mois', montant_initial: montantInitial || 0, date_debut: new Date().toISOString().slice(0, 10) }),
+        });
+        budgetContext.id_budget = created.id_budget;
+        return budgetContext.id_budget;
+      }
+
+      async function ensureCategoryId(nom) {
+        if (!categoryCache) categoryCache = await apiFetch('/economique/categories-depense');
+        let cat = categoryCache.find(c => c.nom.toLowerCase() === nom.toLowerCase());
+        if (cat) return cat.id_categorie;
+        const created = await apiFetch('/economique/categories-depense', { method: 'POST', body: JSON.stringify({ nom }) });
+        categoryCache.push(created);
+        return created.id_categorie;
+      }
+
+      async function loadBudgetInfo() {
+        try {
+          const rows = await apiFetch('/economique/budgets');
+          if (rows.length) {
+            budgetContext.id_budget = rows[0].id_budget;
+            state.budget.montant = +rows[0].montant_initial;
+            document.getElementById('bg-montant').value = state.budget.montant;
+          }
+        } catch (err) { console.error(err); }
+      }
+
+      async function loadExpenses() {
+        try {
+          const id_budget = await ensureBudgetId(0);
+          if (!categoryCache) categoryCache = await apiFetch('/economique/categories-depense');
+          const rows = await apiFetch('/economique/depenses');
+          state.expenses = rows.filter(r => r.id_budget === id_budget).map(r => {
+            const cat = categoryCache.find(c => c.id_categorie === r.id_categorie);
+            return { id: r.id_depense, nom: r.description, cat: cat ? cat.nom : '—', montant: r.montant };
+          });
+          renderDep(); renderEco(); renderStats();
+        } catch (err) { console.error(err); }
+      }
+
       function showAuthScreen() {
         document.getElementById('auth-screen').classList.add('active');
         document.querySelector('.app').style.display = 'none';
@@ -1125,6 +1246,10 @@
         const user = getUser();
         const nameEl = document.getElementById('user-name');
         if (nameEl && user) nameEl.textContent = user.prenom + ' ' + user.nom;
+        loadEvents();
+        loadUEs();
+        loadBudgetInfo();
+        loadExpenses();
       }
 
       document.querySelectorAll('.auth-tab').forEach(tab => {
@@ -1214,12 +1339,20 @@
           state.ue.splice(+e.target.dataset.i, 1); persist(); renderUE(); renderStats();
         }));
       }
-      document.getElementById('add-ue').addEventListener('click', () => {
+      document.getElementById('add-ue').addEventListener('click', async () => {
         const nom = document.getElementById('ue-nom').value.trim();
         if (!nom) return;
-        state.ue.push({ nom, vol: document.getElementById('ue-vol').value, cred: document.getElementById('ue-cred').value });
-        ['ue-nom', 'ue-vol', 'ue-cred'].forEach(id => document.getElementById(id).value = '');
-        persist(); renderUE(); renderStats();
+        const vol = document.getElementById('ue-vol').value;
+        const cred = document.getElementById('ue-cred').value;
+        try {
+          const id_semestre = await ensurePedagogieContext();
+          await apiFetch('/pedagogique/ues', {
+            method: 'POST',
+            body: JSON.stringify({ nom, volume_horaire: vol || null, credits: cred || null, id_semestre }),
+          });
+          ['ue-nom', 'ue-vol', 'ue-cred'].forEach(id => document.getElementById(id).value = '');
+          await loadUEs();
+        } catch (err) { alert(err.message); }
       });
 
       document.getElementById('ai-generate').addEventListener('click', () => {
@@ -1266,12 +1399,21 @@
           grid.appendChild(col);
         });
       }
-      document.getElementById('add-ev').addEventListener('click', () => {
+      document.getElementById('add-ev').addEventListener('click', async () => {
         const titre = document.getElementById('ev-titre').value.trim();
         if (!titre) return;
-        state.events.push({ titre, jour: document.getElementById('ev-jour').value, heure: document.getElementById('ev-heure').value, canal: document.getElementById('ev-canal').value });
-        document.getElementById('ev-titre').value = ''; document.getElementById('ev-heure').value = '';
-        persist(); renderWeek(); renderStats(); renderRestSuggestion();
+        const jour = document.getElementById('ev-jour').value;
+        const heure = document.getElementById('ev-heure').value;
+        try {
+          await apiFetch('/personnel/evenements', {
+            method: 'POST',
+            body: JSON.stringify({ titre, date_debut: nextDateForDay(jour, heure) }),
+          });
+          document.getElementById('ev-titre').value = ''; document.getElementById('ev-heure').value = '';
+          await loadEvents();
+        } catch (err) {
+          alert(err.message);
+        }
       });
       function renderRestSuggestion() {
         const box = document.getElementById('rest-suggestion');
@@ -1286,10 +1428,16 @@
       // ---- ECONOMIQUE ----
       document.getElementById('bg-montant').value = state.budget.montant || '';
       document.getElementById('bg-imprevu').value = state.budget.imprevu || '';
-      document.getElementById('set-budget').addEventListener('click', () => {
-        state.budget.montant = +document.getElementById('bg-montant').value || 0;
-        state.budget.imprevu = +document.getElementById('bg-imprevu').value || 0;
-        persist(); renderEco(); renderStats();
+      document.getElementById('set-budget').addEventListener('click', async () => {
+        const montant = +document.getElementById('bg-montant').value || 0;
+        const imprevu = +document.getElementById('bg-imprevu').value || 0;
+        try {
+          const id_budget = await ensureBudgetId(montant);
+          await apiFetch(`/economique/budgets/${id_budget}`, { method: 'PUT', body: JSON.stringify({ montant_initial: montant }) });
+          state.budget.montant = montant;
+          state.budget.imprevu = imprevu;
+          persist(); renderEco(); renderStats();
+        } catch (err) { alert(err.message); }
       });
       function renderDep() {
         const tbody = document.querySelector('#dep-table tbody');
@@ -1304,13 +1452,21 @@
           state.expenses.splice(+e.target.dataset.i, 1); persist(); renderDep(); renderEco(); renderStats();
         }));
       }
-      document.getElementById('add-dep').addEventListener('click', () => {
+      document.getElementById('add-dep').addEventListener('click', async () => {
         const nom = document.getElementById('dep-nom').value.trim();
         const montant = +document.getElementById('dep-montant').value || 0;
+        const catNom = document.getElementById('dep-cat').value;
         if (!nom || !montant) return;
-        state.expenses.push({ nom, cat: document.getElementById('dep-cat').value, montant });
-        document.getElementById('dep-nom').value = ''; document.getElementById('dep-montant').value = '';
-        persist(); renderDep(); renderEco(); renderStats();
+        try {
+          const id_budget = await ensureBudgetId(0);
+          const id_categorie = await ensureCategoryId(catNom);
+          await apiFetch('/economique/depenses', {
+            method: 'POST',
+            body: JSON.stringify({ montant, description: nom, date_depense: new Date().toISOString().slice(0, 10), imprevue: false, id_budget, id_categorie }),
+          });
+          document.getElementById('dep-nom').value = ''; document.getElementById('dep-montant').value = '';
+          await loadExpenses();
+        } catch (err) { alert(err.message); }
       });
       function renderEco() {
         const totalDep = state.expenses.reduce((s, d) => s + (+d.montant || 0), 0);
