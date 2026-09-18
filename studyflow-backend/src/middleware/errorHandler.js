@@ -1,4 +1,10 @@
 module.exports = function errorHandler(err, req, res, next) {
+  // Erreurs « prévues » (ex: assistant IA indisponible) : le message est déjà rédigé pour
+  // l'utilisateur et le détail technique a été journalisé à la source, on le renvoie tel quel.
+  if (err.expose && err.status) {
+    return res.status(err.status).json({ error: err.message });
+  }
+
   console.error(err);
 
   if (err.code === 'ER_DUP_ENTRY') {
