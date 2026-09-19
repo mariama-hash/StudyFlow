@@ -43,11 +43,11 @@ mount(
 router.get(
   '/mes-competences',
   asyncHandler(async (req, res) => {
-    const [rows] = await pool.query(
+    const { rows } = await pool.query(
       `SELECT uc.id_competence, uc.niveau, c.nom, c.description
        FROM utilisateur_competence uc
        JOIN competence c ON c.id_competence = uc.id_competence
-       WHERE uc.id_utilisateur = ?`,
+       WHERE uc.id_utilisateur = $1`,
       [req.user.id_utilisateur]
     );
     res.json(rows);
@@ -58,7 +58,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const { id_competence, niveau } = req.body;
     await pool.query(
-      'INSERT INTO utilisateur_competence (id_utilisateur, id_competence, niveau) VALUES (?,?,?)',
+      'INSERT INTO utilisateur_competence (id_utilisateur, id_competence, niveau) VALUES ($1,$2,$3)',
       [req.user.id_utilisateur, id_competence, niveau || null]
     );
     res.status(201).json({ id_utilisateur: req.user.id_utilisateur, id_competence, niveau });
@@ -67,7 +67,7 @@ router.post(
 router.delete(
   '/mes-competences/:id_competence',
   asyncHandler(async (req, res) => {
-    await pool.query('DELETE FROM utilisateur_competence WHERE id_utilisateur = ? AND id_competence = ?', [
+    await pool.query('DELETE FROM utilisateur_competence WHERE id_utilisateur = $1 AND id_competence = $2', [
       req.user.id_utilisateur,
       req.params.id_competence,
     ]);
@@ -78,10 +78,10 @@ router.delete(
 router.get(
   '/mes-projets',
   asyncHandler(async (req, res) => {
-    const [rows] = await pool.query(
+    const { rows } = await pool.query(
       `SELECT p.* FROM utilisateur_projet up
        JOIN projet p ON p.id_projet = up.id_projet
-       WHERE up.id_utilisateur = ?`,
+       WHERE up.id_utilisateur = $1`,
       [req.user.id_utilisateur]
     );
     res.json(rows);
@@ -91,7 +91,7 @@ router.post(
   '/mes-projets',
   asyncHandler(async (req, res) => {
     const { id_projet } = req.body;
-    await pool.query('INSERT INTO utilisateur_projet (id_utilisateur, id_projet) VALUES (?,?)', [
+    await pool.query('INSERT INTO utilisateur_projet (id_utilisateur, id_projet) VALUES ($1,$2)', [
       req.user.id_utilisateur,
       id_projet,
     ]);
@@ -101,7 +101,7 @@ router.post(
 router.delete(
   '/mes-projets/:id_projet',
   asyncHandler(async (req, res) => {
-    await pool.query('DELETE FROM utilisateur_projet WHERE id_utilisateur = ? AND id_projet = ?', [
+    await pool.query('DELETE FROM utilisateur_projet WHERE id_utilisateur = $1 AND id_projet = $2', [
       req.user.id_utilisateur,
       req.params.id_projet,
     ]);
@@ -112,10 +112,10 @@ router.delete(
 router.get(
   '/mes-badges',
   asyncHandler(async (req, res) => {
-    const [rows] = await pool.query(
+    const { rows } = await pool.query(
       `SELECT ub.date_obtention, b.* FROM utilisateur_badge ub
        JOIN badge b ON b.id_badge = ub.id_badge
-       WHERE ub.id_utilisateur = ?`,
+       WHERE ub.id_utilisateur = $1`,
       [req.user.id_utilisateur]
     );
     res.json(rows);
@@ -127,7 +127,7 @@ router.post(
     // Attribution réservée à l'ADMIN ou à une future logique métier automatique
     if (req.user.role !== 'ADMIN') return res.status(403).json({ error: 'Réservé aux administrateurs' });
     const { id_utilisateur, id_badge } = req.body;
-    await pool.query('INSERT INTO utilisateur_badge (id_utilisateur, id_badge) VALUES (?,?)', [
+    await pool.query('INSERT INTO utilisateur_badge (id_utilisateur, id_badge) VALUES ($1,$2)', [
       id_utilisateur,
       id_badge,
     ]);
@@ -138,10 +138,10 @@ router.post(
 router.get(
   '/competences-projet/:id_projet',
   asyncHandler(async (req, res) => {
-    const [rows] = await pool.query(
+    const { rows } = await pool.query(
       `SELECT c.* FROM competence_projet cp
        JOIN competence c ON c.id_competence = cp.id_competence
-       WHERE cp.id_projet = ?`,
+       WHERE cp.id_projet = $1`,
       [req.params.id_projet]
     );
     res.json(rows);
@@ -151,10 +151,10 @@ router.get(
 router.get(
   '/competences-opportunite/:id_opportunite',
   asyncHandler(async (req, res) => {
-    const [rows] = await pool.query(
+    const { rows } = await pool.query(
       `SELECT c.* FROM competence_opportunite co
        JOIN competence c ON c.id_competence = co.id_competence
-       WHERE co.id_opportunite = ?`,
+       WHERE co.id_opportunite = $1`,
       [req.params.id_opportunite]
     );
     res.json(rows);

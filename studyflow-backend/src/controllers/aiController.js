@@ -20,27 +20,27 @@ function nettoyer(valeur, max) {
 // UE de l'étudiant + ce qui aide l'IA à prioriser : moyenne pondérée des notes déjà saisies
 // et prochaine évaluation encore sans note. Un seul aller-retour SQL.
 async function getUserUEs(userId) {
-  const [rows] = await pool.query(
+  const { rows } = await pool.query(
     `SELECT u.id_ue, u.nom, u.credits, u.volume_horaire,
        (SELECT SUM(r.note * e.coefficient) / SUM(e.coefficient)
           FROM evaluation e
           JOIN resultat r ON r.id_evaluation = e.id_evaluation
          WHERE e.id_ue = u.id_ue) AS moyenne,
-       (SELECT DATE_FORMAT(MIN(e.date_evaluation), '%Y-%m-%d')
+       (SELECT TO_CHAR(MIN(e.date_evaluation), 'YYYY-MM-DD')
           FROM evaluation e
           LEFT JOIN resultat r ON r.id_evaluation = e.id_evaluation
-         WHERE e.id_ue = u.id_ue AND r.id_resultat IS NULL AND e.date_evaluation >= CURDATE()) AS prochaine_eval
+         WHERE e.id_ue = u.id_ue AND r.id_resultat IS NULL AND e.date_evaluation >= CURRENT_DATE) AS prochaine_eval
      FROM ue u
      JOIN semestre s ON u.id_semestre = s.id_semestre
      JOIN inscription i ON s.id_inscription = i.id_inscription
-     WHERE i.id_utilisateur = ?
+     WHERE i.id_utilisateur = $1
      ORDER BY u.id_ue ASC`,
     [userId]
   );
   if (!rows.length) {
     throw new AiError(400, "Ajoute d'abord au moins une UE pour utiliser l'assistant.");
   }
-  // mysql2 renvoie les DECIMAL sous forme de chaînes
+  // pg renvoie les DECIMAL/NUMERIC sous forme de chaînes
   return rows.map((u) => ({
     id_ue: u.id_ue,
     nom: u.nom,
@@ -71,20 +71,23 @@ function choisirUE(ues, idDemande) {
 }
 
 async function ensureBadge(nom, description) {
-  const [rows] = await pool.query('SELECT id_badge FROM badge WHERE nom = ? LIMIT 1', [nom]);
+  const { rows } = await pool.query('SELECT id_badge FROM badge WHERE nom = $1 LIMIT 1', [nom]);
   if (rows.length) return rows[0].id_badge;
-  const [r] = await pool.query('INSERT INTO badge (nom, description) VALUES (?,?)', [nom, description]);
-  return r.insertId;
+  const { rows: r } = await pool.query(
+    'INSERT INTO badge (nom, description) VALUES ($1,$2) RETURNING id_badge',
+    [nom, description]
+  );
+  return r[0].id_badge;
 }
 
 async function awardBadge(userId, nom, description) {
   const idBadge = await ensureBadge(nom, description);
-  const [existing] = await pool.query(
-    'SELECT 1 AS x FROM utilisateur_badge WHERE id_utilisateur = ? AND id_badge = ?',
+  const { rows: existing } = await pool.query(
+    'SELECT 1 AS x FROM utilisateur_badge WHERE id_utilisateur = $1 AND id_badge = $2',
     [userId, idBadge]
   );
   if (!existing.length) {
-    await pool.query('INSERT INTO utilisateur_badge (id_utilisateur, id_badge) VALUES (?,?)', [userId, idBadge]);
+    await pool.query('INSERT INTO utilisateur_badge (id_utilisateur, id_badge) VALUES ($1,$2)', [userId, idBadge]);
   }
 }
 

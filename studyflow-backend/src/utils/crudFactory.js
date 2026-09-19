@@ -40,21 +40,21 @@ function crudFactory(table, pk, opts = {}) {
 
   return {
     getAll: async (req, res) => {
-      let sql = `SELECT * FROM \`${table}\``;
+      let sql = `SELECT * FROM ${table}`;
       const params = [];
       if (scopeField && !isAdmin(req)) {
-        sql += ` WHERE \`${scopeField}\` = ?`;
+        sql += ` WHERE ${scopeField} = $1`;
         params.push(req.user.id_utilisateur);
       } else if (chainConfig && !isAdmin(req)) {
         sql += ` WHERE ${buildNestedWhere(chainConfig.fkColumn, chainConfig.chain)}`;
         params.push(req.user.id_utilisateur);
       }
-      const [rows] = await pool.query(sql, params);
+      const { rows } = await pool.query(sql, params);
       res.json(rows);
     },
 
     getOne: async (req, res) => {
-      const [rows] = await pool.query(`SELECT * FROM \`${table}\` WHERE \`${pk}\` = ?`, [req.params.id]);
+      const { rows } = await pool.query(`SELECT * FROM ${table} WHERE ${pk} = $1`, [req.params.id]);
       if (!rows.length) return res.status(404).json({ error: 'Introuvable' });
       const row = rows[0];
       if (!(await checkRowOwnership(req, row))) {
@@ -83,19 +83,19 @@ function crudFactory(table, pk, opts = {}) {
 
       const cols = Object.keys(data);
       if (!cols.length) return res.status(400).json({ error: 'Aucune donnée fournie' });
-      const placeholders = cols.map(() => '?').join(',');
-      const [result] = await pool.query(
-        `INSERT INTO \`${table}\` (${cols.map((c) => `\`${c}\``).join(',')}) VALUES (${placeholders})`,
+      const placeholders = cols.map((_, i) => `$${i + 1}`).join(',');
+      const { rows } = await pool.query(
+        `INSERT INTO ${table} (${cols.join(',')}) VALUES (${placeholders}) RETURNING ${pk}`,
         cols.map((c) => data[c])
       );
-      res.status(201).json({ [pk]: result.insertId, ...data });
+      res.status(201).json({ [pk]: rows[0][pk], ...data });
     },
 
     update: async (req, res) => {
       if (adminOnlyWrite && !isAdmin(req)) {
         return res.status(403).json({ error: 'Réservé aux administrateurs' });
       }
-      const [rows] = await pool.query(`SELECT * FROM \`${table}\` WHERE \`${pk}\` = ?`, [req.params.id]);
+      const { rows } = await pool.query(`SELECT * FROM ${table} WHERE ${pk} = $1`, [req.params.id]);
       if (!rows.length) return res.status(404).json({ error: 'Introuvable' });
       const row = rows[0];
       if (!(await checkRowOwnership(req, row))) {
@@ -106,8 +106,8 @@ function crudFactory(table, pk, opts = {}) {
       if (scopeField) delete data[scopeField]; // on ne réassigne jamais le propriétaire
       const cols = Object.keys(data);
       if (!cols.length) return res.status(400).json({ error: 'Aucune donnée à mettre à jour' });
-      const setSql = cols.map((c) => `\`${c}\` = ?`).join(',');
-      await pool.query(`UPDATE \`${table}\` SET ${setSql} WHERE \`${pk}\` = ?`, [
+      const setSql = cols.map((c, i) => `${c} = $${i + 1}`).join(',');
+      await pool.query(`UPDATE ${table} SET ${setSql} WHERE ${pk} = $${cols.length + 1}`, [
         ...cols.map((c) => data[c]),
         req.params.id,
       ]);
@@ -118,13 +118,13 @@ function crudFactory(table, pk, opts = {}) {
       if (adminOnlyWrite && !isAdmin(req)) {
         return res.status(403).json({ error: 'Réservé aux administrateurs' });
       }
-      const [rows] = await pool.query(`SELECT * FROM \`${table}\` WHERE \`${pk}\` = ?`, [req.params.id]);
+      const { rows } = await pool.query(`SELECT * FROM ${table} WHERE ${pk} = $1`, [req.params.id]);
       if (!rows.length) return res.status(404).json({ error: 'Introuvable' });
       const row = rows[0];
       if (!(await checkRowOwnership(req, row))) {
         return res.status(403).json({ error: 'Accès refusé' });
       }
-      await pool.query(`DELETE FROM \`${table}\` WHERE \`${pk}\` = ?`, [req.params.id]);
+      await pool.query(`DELETE FROM ${table} WHERE ${pk} = $1`, [req.params.id]);
       res.json({ message: 'Supprimé' });
     },
   };

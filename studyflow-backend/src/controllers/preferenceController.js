@@ -1,7 +1,7 @@
 const pool = require('../config/db');
 
 exports.getMine = async (req, res) => {
-  const [rows] = await pool.query('SELECT * FROM preference_notification WHERE id_utilisateur = ?', [
+  const { rows } = await pool.query('SELECT * FROM preference_notification WHERE id_utilisateur = $1', [
     req.user.id_utilisateur,
   ]);
   res.json(rows.length ? rows[0] : null);
@@ -9,16 +9,16 @@ exports.getMine = async (req, res) => {
 
 exports.upsertMine = async (req, res) => {
   const { notifications_application, notifications_email, heure_debut, heure_fin } = req.body;
-  const [existing] = await pool.query(
-    'SELECT id_preference FROM preference_notification WHERE id_utilisateur = ?',
+  const { rows: existing } = await pool.query(
+    'SELECT id_preference FROM preference_notification WHERE id_utilisateur = $1',
     [req.user.id_utilisateur]
   );
 
   if (existing.length) {
     await pool.query(
       `UPDATE preference_notification
-       SET notifications_application = ?, notifications_email = ?, heure_debut = ?, heure_fin = ?
-       WHERE id_utilisateur = ?`,
+       SET notifications_application = $1, notifications_email = $2, heure_debut = $3, heure_fin = $4
+       WHERE id_utilisateur = $5`,
       [
         notifications_application ?? true,
         notifications_email ?? false,
@@ -31,7 +31,7 @@ exports.upsertMine = async (req, res) => {
     await pool.query(
       `INSERT INTO preference_notification
         (notifications_application, notifications_email, heure_debut, heure_fin, id_utilisateur)
-       VALUES (?,?,?,?,?)`,
+       VALUES ($1,$2,$3,$4,$5)`,
       [
         notifications_application ?? true,
         notifications_email ?? false,
@@ -42,7 +42,7 @@ exports.upsertMine = async (req, res) => {
     );
   }
 
-  const [rows] = await pool.query('SELECT * FROM preference_notification WHERE id_utilisateur = ?', [
+  const { rows } = await pool.query('SELECT * FROM preference_notification WHERE id_utilisateur = $1', [
     req.user.id_utilisateur,
   ]);
   res.json(rows[0]);

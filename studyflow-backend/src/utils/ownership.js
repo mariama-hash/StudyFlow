@@ -16,8 +16,8 @@ const pool = require('../config/db');
 async function resolveOwnerId(chain, startValue) {
   let currentId = startValue;
   for (const step of chain) {
-    const [rows] = await pool.query(
-      `SELECT \`${step.fk}\` AS v FROM \`${step.table}\` WHERE \`${step.pk}\` = ?`,
+    const { rows } = await pool.query(
+      `SELECT ${step.fk} AS v FROM ${step.table} WHERE ${step.pk} = $1`,
       [currentId]
     );
     if (!rows.length || rows[0].v === null || rows[0].v === undefined) return null;
@@ -27,19 +27,19 @@ async function resolveOwnerId(chain, startValue) {
 }
 
 /**
- * Construit une clause SQL (avec un seul "?" à substituer par l'id_utilisateur)
+ * Construit une clause SQL (avec un seul "$1" à substituer par l'id_utilisateur)
  * qui filtre une table selon le propriétaire final, en remontant la même chaîne.
  *
  * fkColumn : la colonne de la table courante qui référence chain[0].table.
  */
 function buildNestedWhere(fkColumn, chain) {
   const last = chain[chain.length - 1];
-  let sql = `SELECT \`${last.pk}\` FROM \`${last.table}\` WHERE \`${last.fk}\` = ?`;
+  let sql = `SELECT ${last.pk} FROM ${last.table} WHERE ${last.fk} = $1`;
   for (let i = chain.length - 2; i >= 0; i--) {
     const step = chain[i];
-    sql = `SELECT \`${step.pk}\` FROM \`${step.table}\` WHERE \`${step.fk}\` IN (${sql})`;
+    sql = `SELECT ${step.pk} FROM ${step.table} WHERE ${step.fk} IN (${sql})`;
   }
-  return `\`${fkColumn}\` IN (${sql})`;
+  return `${fkColumn} IN (${sql})`;
 }
 
 module.exports = { resolveOwnerId, buildNestedWhere };

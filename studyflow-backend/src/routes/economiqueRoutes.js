@@ -70,15 +70,15 @@ router.get(
   '/budget-courant',
   asyncHandler(async (req, res) => {
     const idBudget = await ensureDefaultBudget(req.user.id_utilisateur);
-    const [budgetRows] = await pool.query('SELECT * FROM budget WHERE id_budget = ?', [idBudget]);
-    const [reserveRows] = await pool.query(
-      `SELECT montant FROM depense WHERE id_budget = ? AND imprevue = TRUE AND description = ? LIMIT 1`,
+    const { rows: budgetRows } = await pool.query('SELECT * FROM budget WHERE id_budget = $1', [idBudget]);
+    const { rows: reserveRows } = await pool.query(
+      `SELECT montant FROM depense WHERE id_budget = $1 AND imprevue = TRUE AND description = $2 LIMIT 1`,
       [idBudget, RESERVE_LABEL]
     );
-    const [depenses] = await pool.query(
+    const { rows: depenses } = await pool.query(
       `SELECT d.*, c.nom AS categorie FROM depense d
        JOIN categorie_depense c ON c.id_categorie = d.id_categorie
-       WHERE d.id_budget = ? AND NOT (d.imprevue = TRUE AND d.description = ?)
+       WHERE d.id_budget = $1 AND NOT (d.imprevue = TRUE AND d.description = $2)
        ORDER BY d.id_depense DESC`,
       [idBudget, RESERVE_LABEL]
     );
@@ -95,19 +95,22 @@ router.put(
   asyncHandler(async (req, res) => {
     const { montant, imprevu } = req.body;
     const idBudget = await ensureDefaultBudget(req.user.id_utilisateur);
-    await pool.query('UPDATE budget SET montant_initial = ? WHERE id_budget = ?', [montant || 0, idBudget]);
+    await pool.query('UPDATE budget SET montant_initial = $1 WHERE id_budget = $2', [montant || 0, idBudget]);
 
     const idCategorie = await ensureCategorie('Réserve');
-    const [existing] = await pool.query(
-      `SELECT id_depense FROM depense WHERE id_budget = ? AND imprevue = TRUE AND description = ? LIMIT 1`,
+    const { rows: existing } = await pool.query(
+      `SELECT id_depense FROM depense WHERE id_budget = $1 AND imprevue = TRUE AND description = $2 LIMIT 1`,
       [idBudget, RESERVE_LABEL]
     );
     if (existing.length) {
-      await pool.query('UPDATE depense SET montant = ? WHERE id_depense = ?', [imprevu || 0, existing[0].id_depense]);
+      await pool.query('UPDATE depense SET montant = $1 WHERE id_depense = $2', [
+        imprevu || 0,
+        existing[0].id_depense,
+      ]);
     } else {
       await pool.query(
         `INSERT INTO depense (montant, description, date_depense, imprevue, id_budget, id_categorie)
-         VALUES (?,?,CURDATE(),TRUE,?,?)`,
+         VALUES ($1,$2,CURRENT_DATE,TRUE,$3,$4)`,
         [imprevu || 0, RESERVE_LABEL, idBudget, idCategorie]
       );
     }

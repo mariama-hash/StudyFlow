@@ -14,19 +14,19 @@ exports.register = async (req, res) => {
     return res.status(400).json({ error: 'nom, prenom, email et mot_de_passe sont requis' });
   }
 
-  const [existing] = await pool.query('SELECT id_utilisateur FROM utilisateur WHERE email = ?', [email]);
+  const { rows: existing } = await pool.query('SELECT id_utilisateur FROM utilisateur WHERE email = $1', [email]);
   if (existing.length) return res.status(409).json({ error: 'Cet email est déjà utilisé' });
 
   const hash = await bcrypt.hash(mot_de_passe, 10);
-  const [result] = await pool.query(
-    'INSERT INTO utilisateur (nom, prenom, email, mot_de_passe, role) VALUES (?,?,?,?,?)',
+  const { rows: result } = await pool.query(
+    'INSERT INTO utilisateur (nom, prenom, email, mot_de_passe, role) VALUES ($1,$2,$3,$4,$5) RETURNING id_utilisateur',
     [nom, prenom, email, hash, 'ETUDIANT']
   );
 
-  const token = signToken({ id_utilisateur: result.insertId, role: 'ETUDIANT', email });
+  const token = signToken({ id_utilisateur: result[0].id_utilisateur, role: 'ETUDIANT', email });
   res.status(201).json({
     token,
-    utilisateur: { id_utilisateur: result.insertId, nom, prenom, email, role: 'ETUDIANT' },
+    utilisateur: { id_utilisateur: result[0].id_utilisateur, nom, prenom, email, role: 'ETUDIANT' },
   });
 };
 
@@ -36,7 +36,7 @@ exports.login = async (req, res) => {
     return res.status(400).json({ error: 'email et mot_de_passe sont requis' });
   }
 
-  const [rows] = await pool.query('SELECT * FROM utilisateur WHERE email = ?', [email]);
+  const { rows } = await pool.query('SELECT * FROM utilisateur WHERE email = $1', [email]);
   if (!rows.length) return res.status(401).json({ error: 'Identifiants invalides' });
 
   const user = rows[0];
@@ -57,8 +57,8 @@ exports.login = async (req, res) => {
 };
 
 exports.me = async (req, res) => {
-  const [rows] = await pool.query(
-    'SELECT id_utilisateur, nom, prenom, email, role, date_inscription FROM utilisateur WHERE id_utilisateur = ?',
+  const { rows } = await pool.query(
+    'SELECT id_utilisateur, nom, prenom, email, role, date_inscription FROM utilisateur WHERE id_utilisateur = $1',
     [req.user.id_utilisateur]
   );
   if (!rows.length) return res.status(404).json({ error: 'Utilisateur introuvable' });
@@ -68,7 +68,7 @@ exports.me = async (req, res) => {
 exports.updateMe = async (req, res) => {
   const { nom, prenom, email } = req.body;
   await pool.query(
-    'UPDATE utilisateur SET nom = COALESCE(?, nom), prenom = COALESCE(?, prenom), email = COALESCE(?, email) WHERE id_utilisateur = ?',
+    'UPDATE utilisateur SET nom = COALESCE($1, nom), prenom = COALESCE($2, prenom), email = COALESCE($3, email) WHERE id_utilisateur = $4',
     [nom || null, prenom || null, email || null, req.user.id_utilisateur]
   );
   res.json({ message: 'Profil mis à jour' });
@@ -76,7 +76,7 @@ exports.updateMe = async (req, res) => {
 
 // Réservé à l'ADMIN
 exports.listUsers = async (req, res) => {
-  const [rows] = await pool.query(
+  const { rows } = await pool.query(
     'SELECT id_utilisateur, nom, prenom, email, role, date_inscription FROM utilisateur'
   );
   res.json(rows);
